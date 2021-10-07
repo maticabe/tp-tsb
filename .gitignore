@@ -35,6 +35,7 @@ build/
 .idea/vcs.xml
 .idea/jsLibraryMappings.xml
 target/*
+nbactions.xml
 
 # Sensitive or high-churn files:
 .idea/dataSources.ids
