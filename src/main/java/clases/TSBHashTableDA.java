@@ -1,20 +1,16 @@
 package clases;
 
 import java.io.Serializable;
-import java.util.AbstractMap;
-import java.util.AbstractSet;
 import java.util.AbstractCollection;
-import java.util.ArrayList;
+import java.util.AbstractSet;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.ConcurrentModificationException;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.IntUnaryOperator;
 
 /**
  * Clase para emular la funcionalidad de la clase java.util.Hashtable provista
@@ -179,7 +175,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public boolean containsKey(Object key) {
-        return (this.get((K) key) != null);
+        return (this.get(key) != null);
     }
 
     /**
@@ -204,9 +200,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     public boolean contains(Object value) {
         if (value == null) return false;
 
-        Iterator<Map.Entry<K, V>> iterator = entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<K, V> entry = iterator.next();
+        for (Map.Entry<K, V> entry : entrySet()) {
             if (value.equals(entry.getValue())) return true;
         }
         return false;
@@ -227,14 +221,13 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     public V get(Object key) {
         if (key == null) throw new NullPointerException("get(): parámetro null");
 
-        int hashingIndex = h((K) key);
-        int quadraticIndex = hashingIndex;
+        int qi = h((K) key);
         int j = 1;
         V value = null;
 
-        while (fieldState[quadraticIndex] != 0) {
-            if (fieldState[quadraticIndex] == 1) {
-                Entry<K, V> entry = this.table[quadraticIndex];
+        while (fieldState[qi] != 0) {
+            if (fieldState[qi] == 1) {
+                Entry<K, V> entry = this.table[qi];
 
                 if (key.equals(entry.getKey())) {
                     value = entry.getValue();
@@ -242,10 +235,10 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
                 }
             }
 
-            quadraticIndex += j * j;
+            qi += j * j;
             j++;
-            if (quadraticIndex >= table.length) {
-                quadraticIndex %= table.length;
+            if (qi >= table.length) {
+                qi %= table.length;
             }
 
         }
@@ -315,29 +308,132 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
         return old;
     }
 
+    /**
+     * Elimina de la tabla la clave key (y su correspondiente valor asociado). El
+     * método no hace nada si la clave no está en la tabla.
+     *
+     * @param key la clave a eliminar.
+     * @return El objeto al cual la clave estaba asociada, o null si la clave no
+     * estaba en la tabla.
+     * @throws NullPointerException - if the key is null.
+     */
     @Override
     public V remove(Object key) {
-        return null;
+        if (key == null)
+            throw new NullPointerException("remove(): parámetro null");
+
+        int qi = this.h((K) key);
+        int j = 1;
+        V old = null;
+
+        // Busco el elemento a eliminar
+        while (this.fieldState[qi] != 0) {
+            // Si en el index actual está cerrado checkeo si es el mismo objeto
+            if (this.fieldState[qi] == 1) {
+                Entry<K, V> entry = this.table[qi];
+
+                // Si es el mismo lo elimino y devuelvo el value
+                if (key.equals(entry.getKey())) {
+                    old = entry.getValue();
+                    this.table[qi] = null;
+                    this.fieldState[qi] = 2;
+
+                    this.count--;
+                    this.modCount++;
+
+                    return old;
+                }
+            }
+
+            // Calculo el nuevo indice
+            qi += j * j;
+            j++;
+            if (qi >= this.table.length) {
+                qi %= this.table.length;
+            }
+        }
+
+        return old;
     }
 
+    /**
+     * Copia en esta tabla, todos los objetos contenidos en el map especificado. Los
+     * nuevos objetos reemplazarán a los que ya existan en la tabla asociados a las
+     * mismas claves (si se repitiese alguna).
+     *
+     * @param m el map cuyos objetos serán copiados en esta tabla.
+     * @throws NullPointerException si m es null.
+     */
     @Override
     public void putAll(Map<? extends K, ? extends V> m) {
-
+        for (Map.Entry<? extends K, ? extends V> e : m.entrySet()) {
+            put(e.getKey(), e.getValue());
+        }
     }
 
+    /**
+     * Elimina el contenido de la tabla, de forma de dejarla vacía. En esta
+     * implementación además, el arreglo de soporte vuelve a tener el tamaño que
+     * inicialmente tuvo al ser creado el objeto.
+     */
     @Override
     public void clear() {
+        table = new Entry[initial_capacity];
+        fieldState = new int[initial_capacity];
 
+        count = 0;
+        modCount++;
     }
 
+    /**
+     * Retorna un Set (conjunto) a modo de vista de todas las claves (key)
+     * contenidas en la tabla. El conjunto está respaldado por la tabla, por lo
+     * que los cambios realizados en la tabla serán reflejados en el conjunto, y
+     * viceversa. Si la tabla es modificada mientras un iterador está actuando
+     * sobre el conjunto vista, el resultado de la iteración será indefinido
+     * (salvo que la modificación sea realizada por la operación remove() propia
+     * del iterador, o por la operación setValue() realizada sobre una entrada
+     * de la tabla que haya sido retornada por el iterador). El conjunto vista
+     * provee métodos para eliminar elementos, y esos métodos a su vez
+     * eliminan el correspondiente par (key, value) de la tabla (a través de las
+     * operaciones Iterator.remove(), Set.remove(), removeAll(), retainAll()
+     * y clear()). El conjunto vista no soporta las operaciones add() y
+     * addAll() (si se las invoca, se lanzará una UnsuportedOperationException).
+     *
+     * @return un conjunto (un Set) a modo de vista de todas las claves
+     * mapeadas en la tabla.
+     */
     @Override
     public Set<K> keySet() {
-        return null;
+        if (keySet == null) keySet = new KeySet();
+
+        return keySet;
     }
 
+    /**
+     * Retorna una Collection (colección) a modo de vista de todos los valores
+     * (values) contenidos en la tabla. La colección está respaldada por la
+     * tabla, por lo que los cambios realizados en la tabla serán reflejados en
+     * la colección, y viceversa. Si la tabla es modificada mientras un iterador
+     * está actuando sobre la colección vista, el resultado de la iteración será
+     * indefinido (salvo que la modificación sea realizada por la operación
+     * remove() propia del iterador, o por la operación setValue() realizada
+     * sobre una entrada de la tabla que haya sido retornada por el iterador).
+     * La colección vista provee métodos para eliminar elementos, y esos métodos
+     * a su vez eliminan el correspondiente par (key, value) de la tabla (a
+     * través de las operaciones Iterator.remove(), Collection.remove(),
+     * removeAll(), removeAll(), retainAll() y clear()). La colección vista no
+     * soporta las operaciones add() y addAll() (si se las invoca, se lanzará
+     * una UnsuportedOperationException).
+     *
+     * @return una colección (un Collection) a modo de vista de todas los
+     * valores mapeados en la tabla.
+     */
     @Override
     public Collection<V> values() {
-        return null;
+        if (values == null) values = new ValueCollection();
+
+        return values;
     }
 
     /**
@@ -360,10 +456,8 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public Set<Map.Entry<K, V>> entrySet() {
-        if (entrySet == null) {
-            // entrySet = Collections.synchronizedSet(new EntrySet());
-            entrySet = new EntrySet();
-        }
+        if (entrySet == null) entrySet = new EntrySet();
+
         return entrySet;
     }
 
@@ -872,6 +966,141 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     }
 
     // TODO: ValueCollection
+    /*
+     * Clase interna que representa una vista de todos los VALORES mapeados en
+     * la tabla: si la vista cambia, cambia también la tabla que le da respaldo,
+     * y viceversa. La vista es stateless: no mantiene estado alguno (es decir,
+     * no contiene datos ella misma, sino que accede y gestiona directamente los
+     * de otra fuente), por lo que no tiene atributos y sus métodos gestionan en
+     * forma directa el contenido de la tabla. Están soportados los metodos para
+     * eliminar un objeto (remove()), eliminar el contenido (clear) y la
+     * creación de un Iterator (que incluye el método Iterator.remove()).
+     */
+    private class ValueCollection extends AbstractCollection<V> {
+        @Override
+        public Iterator<V> iterator() {
+            return new ValueCollectionIterator();
+        }
+
+        @Override
+        public int size() {
+            return TSBHashTableDA.this.count;
+        }
+
+        @Override
+        public boolean contains(Object o) {
+            return TSBHashTableDA.this.containsValue(o);
+        }
+
+        @Override
+        public void clear() {
+            TSBHashTableDA.this.clear();
+        }
+
+        private class ValueCollectionIterator implements Iterator<V> {
+
+            private int currentEntry;
+            private int lastEntry;
+            private boolean isNextOK;
+            private int expectedModCount;
+
+            /*
+             * Crea un iterador comenzando en la primera lista. Activa el mecanismo
+             * fail-fast.
+             */
+            public ValueCollectionIterator() {
+                currentEntry = -1;
+                lastEntry = 0;
+                isNextOK = false;
+                expectedModCount = TSBHashTableDA.this.modCount;
+            }
+
+            /*
+             * Determina si hay al menos un elemento en la tabla que no haya
+             * sido retornado por next().
+             */
+            @Override
+            public boolean hasNext() {
+                // variable auxiliar t y s para simplificar accesos...
+                Entry<K, V> t[] = TSBHashTableDA.this.table;
+                int[] s = TSBHashTableDA.this.fieldState;
+
+                if (currentEntry >= t.length) {
+                    return false;
+                }
+
+                int next_entry = currentEntry + 1;
+                for (int i = next_entry; i < t.length; i++) {
+                    if (s[i] == 1) return true;
+                }
+
+                return false;
+            }
+
+            /*
+             * Retorna el siguiente elemento disponible en la tabla.
+             */
+            @Override
+            public V next() {
+                // control: fail-fast iterator...
+                if (TSBHashTableDA.this.modCount != expectedModCount) {
+                    throw new ConcurrentModificationException("next(): modificación inesperada de tabla...");
+                }
+
+                if (!hasNext()) {
+                    throw new NoSuchElementException("next(): no existe el elemento pedido...");
+                }
+
+                // variable auxiliar t y s para simplificar accesos...
+                Entry<K, V> t[] = TSBHashTableDA.this.table;
+                int s[] = TSBHashTableDA.this.fieldState;
+
+                // busco el siguiente indice cerrado
+                int next_entry = currentEntry;
+                for (next_entry++; s[next_entry] != 1; next_entry++) ;
+
+                // Actualizo los indices
+                lastEntry = currentEntry;
+                currentEntry = next_entry;
+
+                // avisar que next() fue invocado con éxito...
+                isNextOK = true;
+
+                // y retornar la clave del elemento alcanzado...
+
+                return t[currentEntry].getValue();
+            }
+
+            @Override
+            public void remove() {
+                // control: fail-fast iterator...
+                if (TSBHashTableDA.this.modCount != expectedModCount)
+                    throw new ConcurrentModificationException("remove(): modificación inesperada de tabla...");
+
+
+                if (!isNextOK)
+                    throw new IllegalStateException("remove(): debe invocar a next() antes de remove()...");
+
+
+                // eliminar el objeto que retornó next() la última vez...
+                TSBHashTableDA.this.table[currentEntry] = null;
+                TSBHashTableDA.this.fieldState[currentEntry] = 2;
+
+                // queda apuntando al anterior al que se retornó...
+                currentEntry = lastEntry;
+
+                // avisar que el remove() válido para next() ya se activó...
+                isNextOK = false;
+
+                // la tabla tiene un elementon menos...
+                TSBHashTableDA.this.count--;
+
+                // fail_fast iterator: to do en orden...
+                TSBHashTableDA.this.modCount++;
+                expectedModCount++;
+            }
+        }
+    }
 
 
     /**
