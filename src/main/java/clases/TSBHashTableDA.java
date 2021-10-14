@@ -1161,7 +1161,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     @Override
     protected Object clone() throws CloneNotSupportedException {
 
-        TSBHashtable<K, V> t = new TSBHashtable<>(this.table.length, this.load_factor);
+        TSBHashTableDA<K, V> t = new TSBHashTableDA<>(this.table.length, this.load_factor);
 
         for (Map.Entry<K, V> entry : this.entrySet()) {
             t.put(entry.getKey(), entry.getValue());
