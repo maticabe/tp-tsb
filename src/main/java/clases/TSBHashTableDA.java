@@ -44,6 +44,7 @@ import java.util.Set;
  * @version Septiembre de 2017.
  */
 public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable {
+    //************************ Constantes (privadas o públicas).
 
     // el tamaño máximo que podrá tener el arreglo de soprte...
     private final static int MAX_SIZE = Integer.MAX_VALUE;
@@ -51,7 +52,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     //************************ Atributos privados (estructurales).
 
     // la tabla hash: el arreglo que contiene las listas de desborde...
-    private Entry<K, V>[] table;
+    private EntryDA<K, V>[] table;
 
     // el tamaño inicial de la tabla (tamaño con el que fue creada)...
     private int initial_capacity;
@@ -61,10 +62,6 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
 
     // el factor de carga para calcular si hace falta un rehashing...
     private float load_factor;
-
-    // Arreglo que almacenará el estado de la casilla
-    private int[] fieldState;
-
 
     //************************ Atributos privados (para gestionar las vistas).
 
@@ -76,12 +73,14 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      * que sólo soportan operaciones), y por lo tanto no es necesario crear más
      * de una de cada una.
      */
+    private transient Set<K> keySet = null;
+    private transient Set<Map.Entry<K, V>> entrySet = null;
+    private transient Collection<V> values = null;
 
     //************************ Atributos protegidos (control de iteración).
 
     // conteo de operaciones de cambio de tamaño (fail-fast iterator).
     protected transient int modCount;
-
 
     //************************ Constructores.
 
@@ -90,7 +89,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      * de carga igual a 0.8f.
      */
     public TSBHashTableDA() {
-        this(59, 0.8f);
+        this(5, 0.8f);
     }
 
     /**
@@ -117,20 +116,22 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
             load_factor = 0.8f;
         }
         if (initial_capacity <= 0) {
-            initial_capacity = 59;
+            initial_capacity = 11;
         } else {
             if (initial_capacity > TSBHashTableDA.MAX_SIZE) {
                 initial_capacity = TSBHashTableDA.MAX_SIZE;
             }
         }
 
-        this.table = new Entry[initial_capacity];
-        this.fieldState = new int[initial_capacity];
+        this.table = new EntryDA[initial_capacity];
+        for (int i = 0; i < table.length; i++) {
+            table[i] = new EntryDA<>();
+        }
 
         this.initial_capacity = initial_capacity;
         this.load_factor = load_factor;
-        this.modCount = 0;
         this.count = 0;
+        this.modCount = 0;
     }
 
     /**
@@ -139,10 +140,9 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      * @param t el Map a partir del cual se creará la tabla.
      */
     public TSBHashTableDA(Map<? extends K, ? extends V> t) {
-        this(59, 0.8f);
+        this(11, 0.8f);
         this.putAll(t);
     }
-
 
     //************************ Implementación de métodos especificados por Map.
 
@@ -175,7 +175,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public boolean containsKey(Object key) {
-        return (this.get(key) != null);
+        return (this.get((K) key) != null);
     }
 
     /**
@@ -188,22 +188,6 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     @Override
     public boolean containsValue(Object value) {
         return this.contains(value);
-    }
-
-    /**
-     * Determina si alguna clave de la tabla está asociada al objeto value que
-     * entra como parámetro. Equivale a containsValue().
-     *
-     * @param value el objeto a buscar en la tabla.
-     * @return true si alguna clave está asociada efectivamente a ese value.
-     */
-    public boolean contains(Object value) {
-        if (value == null) return false;
-
-        for (Map.Entry<K, V> entry : entrySet()) {
-            if (value.equals(entry.getValue())) return true;
-        }
-        return false;
     }
 
     /**
@@ -221,28 +205,13 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     public V get(Object key) {
         if (key == null) throw new NullPointerException("get(): parámetro null");
 
-        int qi = h((K) key);
-        int j = 1;
-        V value = null;
-
-        while (fieldState[qi] != 0) {
-            if (fieldState[qi] == 1) {
-                Entry<K, V> entry = this.table[qi];
-
-                if (key.equals(entry.getKey())) {
-                    value = entry.getValue();
-                    return value;
-                }
-            }
-
-            qi += j * j;
-            j++;
-            if (qi >= table.length) {
-                qi %= table.length;
-            }
-
+        int index = this.search_for_index((K) key);
+        if (index != -1) {
+            EntryDA<K, V> entry = (EntryDA<K, V>) this.table[index];
+            return entry.getValue();
+        } else {
+            return null;
         }
-        return value;
     }
 
     /**
@@ -262,55 +231,47 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     public V put(K key, V value) {
         if (key == null || value == null) throw new NullPointerException("put(): parámetro null");
 
-        int qi = h(key);
-        int firstTombstone = -1;
-        int j = 1;
         V old = null;
+        int firstTombstone = -1;
+        int ie = this.h(key.hashCode());
 
-        // Checkeo si la key existía
-        while (fieldState[qi] == 1) {
-            // Si la casilla está cerrada en la posición aux checkeo si es el mismo elemento
-            if (fieldState[qi] == 1) {
-                Entry<K, V> entry = table[qi];
-                // Si es el mismo value lo sobreescribo y devuelvo el anterior
-                if (key.equals(entry.getKey())) {
-                    old = entry.getValue();
-                    entry.setValue(value);
-                    count++;
-                    modCount++;
-                    return old;
+        for (int i = 0; ; i++) {
+            int y = ie + i * i;
+            y = y % this.table.length;
+            EntryDA<K, V> entry = (EntryDA<K, V>) this.table[y];
+            if (entry.getState() != 0) {
+                if (entry.getState() == 1) {
+                    if (key.equals(entry.getKey())) {
+                        old = entry.getValue();
+                        entry.setValue(value);
+                        return old;
+                    }
+                } else {
+                    if (entry.getState() == 2) {
+                        firstTombstone = y;
+                    }
                 }
-            }
-            // Si en el camino encuentro un index tumba lo guardo
-            if (fieldState[qi] >= 0) firstTombstone = qi;
+            } else if (entry.getState() == 0) {
+                if (firstTombstone != -1) {
+                    this.table[firstTombstone] = new EntryDA(key, value);
 
-            // Calculamos el nuevo index con el método quadratic probing
-            qi += j * j;
-            j++;
-            if (qi >= table.length) {
-                qi %= table.length;
+                } else {
+                    this.table[y] = new EntryDA(key, value);
+
+                }
+                this.count++;
+                this.modCount++;
+
+                if (this.count / this.table.length >= this.load_factor) this.rehash();
+
+                return old;
             }
         }
-        // Si el index firstTombstone existe sobreescribimos el index cuadrático
-        if (firstTombstone >= 0) qi = firstTombstone;
-
-        // Si el index está en estado abierto o tumba
-        table[qi] = new Entry<>(key, value);
-        fieldState[qi] = 1;
-
-        count++;
-        modCount++;
-
-        // Check del load factor
-        float lf = (float) count / table.length;
-        if (lf >= load_factor) rehash();
-
-        return old;
     }
 
     /**
-     * Elimina de la tabla la clave key (y su correspondiente valor asociado). El
-     * método no hace nada si la clave no está en la tabla.
+     * Elimina de la tabla la clave key (y su correspondiente valor asociado).
+     * El método no hace nada si la clave no está en la tabla.
      *
      * @param key la clave a eliminar.
      * @return El objeto al cual la clave estaba asociada, o null si la clave no
@@ -319,47 +280,25 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public V remove(Object key) {
-        if (key == null)
-            throw new NullPointerException("remove(): parámetro null");
+        if (key == null) throw new NullPointerException("remove(): parámetro null");
 
-        int qi = this.h((K) key);
-        int j = 1;
+        int index = this.search_for_index((K) key);
         V old = null;
-
-        // Busco el elemento a eliminar
-        while (this.fieldState[qi] != 0) {
-            // Si en el index actual está cerrado checkeo si es el mismo objeto
-            if (this.fieldState[qi] == 1) {
-                Entry<K, V> entry = this.table[qi];
-
-                // Si es el mismo lo elimino y devuelvo el value
-                if (key.equals(entry.getKey())) {
-                    old = entry.getValue();
-                    this.table[qi] = null;
-                    this.fieldState[qi] = 2;
-
-                    this.count--;
-                    this.modCount++;
-
-                    return old;
-                }
-            }
-
-            // Calculo el nuevo indice
-            qi += j * j;
-            j++;
-            if (qi >= this.table.length) {
-                qi %= this.table.length;
-            }
+        if (index != -1) {
+            old = this.table[index].getValue();
+            this.table[index] = new EntryDA<>();
+            this.table[index].setState(2);
+            this.count--;
+            this.modCount++;
         }
 
         return old;
     }
 
     /**
-     * Copia en esta tabla, todos los objetos contenidos en el map especificado. Los
-     * nuevos objetos reemplazarán a los que ya existan en la tabla asociados a las
-     * mismas claves (si se repitiese alguna).
+     * Copia en esta tabla, todos los objetos contenidos en el map especificado.
+     * Los nuevos objetos reemplazarán a los que ya existan en la tabla
+     * asociados a las mismas claves (si se repitiese alguna).
      *
      * @param m el map cuyos objetos serán copiados en esta tabla.
      * @throws NullPointerException si m es null.
@@ -372,17 +311,18 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     }
 
     /**
-     * Elimina el contenido de la tabla, de forma de dejarla vacía. En esta
+     * Elimina todo el contenido de la tabla, de forma de dejarla vacía. En esta
      * implementación además, el arreglo de soporte vuelve a tener el tamaño que
      * inicialmente tuvo al ser creado el objeto.
      */
     @Override
     public void clear() {
-        table = new Entry[initial_capacity];
-        fieldState = new int[initial_capacity];
-
-        count = 0;
-        modCount++;
+        this.table = new EntryDA[this.initial_capacity];
+        for (int i = 0; i < this.table.length; i++) {
+            this.table[i] = new EntryDA<>();
+        }
+        this.count = 0;
+        this.modCount++;
     }
 
     /**
@@ -405,8 +345,9 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public Set<K> keySet() {
-        if (keySet == null) keySet = new KeySet();
-
+        if (keySet == null) {
+            keySet = new KeySet();
+        }
         return keySet;
     }
 
@@ -431,8 +372,9 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public Collection<V> values() {
-        if (values == null) values = new ValueCollection();
-
+        if (values == null) {
+            values = new ValueCollection();
+        }
         return values;
     }
 
@@ -456,42 +398,132 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public Set<Map.Entry<K, V>> entrySet() {
-        if (entrySet == null) entrySet = new EntrySet();
-
+        if (entrySet == null) {
+            entrySet = new EntrySet();
+        }
         return entrySet;
     }
 
+
+    //************************ Redefinición de métodos heredados desde Object.
+
     /**
-     * Función de hashing
+     * Retorna una copia superficial de la tabla. Las listas de desborde o
+     * buckets que conforman la tabla se clonan ellas mismas, pero no se clonan
+     * los objetos que esas listas contienen: en cada bucket de la tabla se
+     * almacenan las direcciones de los mismos objetos que contiene la original.
      *
-     * @param k clave
-     * @param s tamaño de la tabla
-     * @return índice válido de acuerdo a los parámetros pasados.
+     * @return una copia superficial de la tabla.
+     * @throws java.lang.CloneNotSupportedException si la clase no implementa la
+     *                                              interface Cloneable.
      */
-    private int h(int k, int s) {
-        if (k < 0) k *= -1;
-        return k % s;
+    @Override
+    public Object clone() throws CloneNotSupportedException {
+        TSBHashTableDA<K, V> t = (TSBHashTableDA<K, V>) super.clone();
+        int n = this.table.length;
+        t.table = new EntryDA[n];
+        System.arraycopy(this.table, 0, t.table, 0, n);
+
+        t.keySet = null;
+        t.entrySet = null;
+        t.values = null;
+        t.modCount = 0;
+        return t;
     }
 
     /**
-     * Función de hashing (overladed)
+     * Determina si esta tabla es igual al objeto espeficicado.
      *
-     * @param key clave
-     * @param s   tamaño de la tabla
-     * @return índice válido de acuerdo a los parámetros pasados.
+     * @param obj el objeto a comparar con esta tabla.
+     * @return true si los objetos son iguales.
      */
-    private int h(K key, int s) {
-        return h(key.hashCode(), s);
+    @Override
+    public boolean equals(Object obj) {
+        if (!(obj instanceof Map)) {
+            return false;
+        }
+
+        Map<K, V> t = (Map<K, V>) obj;
+        if (t.size() != this.size()) {
+            return false;
+        }
+
+        try {
+            Iterator<Map.Entry<K, V>> i = this.entrySet().iterator();
+            while (i.hasNext()) {
+                Map.Entry<K, V> e = i.next();
+                K key = e.getKey();
+                V value = e.getValue();
+                if (t.get(key) == null) {
+                    return false;
+                } else {
+                    if (!value.equals(t.get(key))) {
+                        return false;
+                    }
+                }
+            }
+        } catch (ClassCastException | NullPointerException e) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
-     * Función de hashing (overloaded)
+     * Retorna un hash code para la tabla completa.
      *
-     * @param key clave
-     * @return índice válido de la tabla de acuerdo a la clave que se pasó.
+     * @return un hash code para la tabla.
      */
-    private int h(K key) {
-        return h(key, table.length);
+    @Override
+    public int hashCode() {
+        // HACER...
+        if (this.isEmpty()) return 0;
+
+        return Arrays.hashCode(table);
+    }
+
+    /**
+     * Devuelve el contenido de la tabla en forma de String. Sólo por razones de
+     * didáctica, se hace referencia explícita en esa cadena al contenido de
+     * cada una de las listas de desborde o buckets de la tabla.
+     *
+     * @return una cadena con el contenido completo de la tabla.
+     */
+    @Override
+    public String toString() {
+        StringBuilder cad = new StringBuilder("");
+        cad.append("Tabla: { \n");
+        for (int i = 0; i < this.table.length; i++) {
+            if (table[i].getState() != 1) {
+
+            } else {
+                cad.append("\t").append(table[i].toString()).append("\n");
+            }
+        }
+        cad.append("}");
+        return cad.toString();
+    }
+
+
+    //************************ Métodos específicos de la clase.
+
+    /**
+     * Determina si alguna clave de la tabla está asociada al objeto value que
+     * entra como parámetro. Equivale a containsValue().
+     *
+     * @param value el objeto a buscar en la tabla.
+     * @return true si alguna clave está asociada efectivamente a ese value.
+     */
+    public boolean contains(Object value) {
+        if (value == null) return false;
+
+        Collection<V> vc = values();
+        Iterator<V> it = vc.iterator();
+        while (it.hasNext()) {
+            V v = it.next();
+            if (value.equals(v)) return true;
+        }
+        return false;
     }
 
     /**
@@ -502,94 +534,175 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      * rehash es de 8 nodos por lista en promedio, aunque seria aceptable hasta
      * unos 10 nodos por lista.
      */
-    private void rehash() {
-        int oldLenght = table.length;
-        int newLenght = nextPrime(oldLenght * 2 + 1);
+    protected void rehash() {
+        int old_length = this.table.length;
 
-        // Creamos las nueva tabla y los estados de la misma
-        Entry<K, V>[] auxTable = new Entry[newLenght];
-        int[] auxFieldState = new int[newLenght];
+        // nuevo tamaño: doble del anterior, más uno para llevarlo a impar...
+        int new_length = nextPrimo(old_length * 2 + 1);
 
-        Arrays.fill(auxFieldState, 0);
-
-        // Como la tabla cambio incrementamos el contador de modificaciones
-        modCount++;
-
-        // Recorremos la tabla anterior y redispersamos en la nueva tabla
-        for (int i = 0; i < table.length; i++) {
-            // Checkeo cada index cerrado y para él obtengo un nuevo valor de hash para la nueva tabla
-            if (fieldState[i] == 1) {
-                Entry<K, V> old = table[i];
-
-                K key = old.getKey();
-                int qi = h(key, auxTable.length), j = 1;
-
-                while (auxFieldState[qi] != 0) {
-                    qi += j * j;
-                    j++;
-                    if (qi >= auxTable.length) {
-                        qi %= auxTable.length;
-                    }
-                }
-
-                // Insertamos el nuevo array
-                auxTable[qi] = old;
-                auxFieldState[qi] = 1;
-            }
+        // no permitir que la tabla tenga un tamaño mayor al límite máximo...
+        // ... para evitar overflow y/o desborde de índices...
+        if (new_length > TSBHashTableDA.MAX_SIZE) {
+            new_length = TSBHashTableDA.MAX_SIZE;
         }
-        table = auxTable;
-        fieldState = auxFieldState;
+
+        // crear el nuevo arreglo
+        EntryDA<K, V>[] temp = new EntryDA[new_length];
+        for (int j = 0; j < temp.length; j++) {
+            temp[j] = new EntryDA();
+        }
+
+        // notificación fail-fast iterator... la tabla cambió su estructura...
+        this.modCount++;
+
+        // recorrer el viejo arreglo y redistribuir los objetos que tenia...
+        for (int i = 0; i < this.table.length; i++) {
+            if (table[i].getState() == 1) {
+                EntryDA<K, V> entry = table[i];
+                K key = entry.getKey();
+                int index = h(key, temp.length);
+                int j = 1;
+
+                while (temp[index].getState() != 0) {
+                    int y = index + j * j;
+                    index = y % temp.length;
+                    j++;
+                }
+                temp[index] = entry;
+            }
+
+        }
+        // cambiar la referencia table para que apunte a temp...
+        this.table = temp;
     }
 
-    /**
-     * Calcula el siguiente número primo del parametro. Es conveniente usar una tabla de tamaño equivalente a un
-     * número primo para evitar la tendencia de que los hash de enteros grandes tengan divisores comunes con el
-     * tamaño de la tabla hash, que provocaría colisiones.
-     *
-     * @param n número del cual se quiere obtener el siguiente primo
-     * @return el siguiente número primo al parámetro
-     */
-    private int nextPrime(int n) {
+    public int nextPrimo(int n) {
         if (n % 2 == 0) n++;
-        while (!isPrime(n)) {
+        while (!esPrimo(n)) {
             n += 2;
         }
         return n;
+
+    }
+
+    public boolean esPrimo(int n) {
+        if (n <= 1) return false;
+
+        boolean esPrimo = true;
+        for (int i = 2; i < n; i++) {
+            if (n % i == 0) {
+                esPrimo = false;
+            }
+        }
+        return esPrimo;
+    }
+
+    //************************ Métodos privados.
+
+    /*
+     * Función hash. Toma una clave entera k y calcula y retorna un índice
+     * válido para esa clave para entrar en la tabla.
+     */
+    private int h(int k) {
+        return h(k, this.table.length);
+    }
+
+    /*
+     * Función hash. Toma un objeto key que representa una clave y calcula y
+     * retorna un índice válido para esa clave para entrar en la tabla.
+     */
+    private int h(K key) {
+        return h(key.hashCode(), this.table.length);
+    }
+
+    /*
+     * Función hash. Toma un objeto key que representa una clave y un tamaño de
+     * tabla t, y calcula y retorna un índice válido para esa clave dedo ese
+     * tamaño.
+     */
+    private int h(K key, int t) {
+        return h(key.hashCode(), t);
+    }
+
+    /*
+     * Función hash. Toma una clave entera k y un tamaño de tabla t, y calcula y
+     * retorna un índice válido para esa clave dado ese tamaño.
+     */
+    private int h(int k, int t) {
+        if (k < 0) k *= -1;
+        return k % t;
     }
 
     /**
-     * Determina si un número es primo
+     * Calcula la longitud promedio de las listas de la tabla.
      *
-     * @param n el número que se quiere saber si es primo
-     * @return true si es primo, false si no lo es
+     * @return la longitud promedio de la listas contenidas en la tabla.
      */
-    private boolean isPrime(int n) {
-        if (n <= 1) return false;
+    private int averageLength() {
+        return this.count / this.table.length;
+    }
 
-        for (int i = 2; i < n; i++) {
-            if (n % i == 0) return false;
+    /*
+     * Busca en la lista bucket un objeto Entry cuya clave coincida con key.
+     * Si lo encuentra, retorna ese objeto Entry. Si no lo encuentra, retorna
+     * null.
+     */
+    private Map.Entry<K, V> search_for_entry(K key) {
+        int index = search_for_index(key);
+        if (index != -1) {
+            EntryDA<K, V> entry = this.table[index];
+            return entry;
         }
+        return null;
+    }
 
-        return true;
+    /*
+     * Busca en la tabla un objeto Entry cuya clave coincida con key.
+     * Si lo encuentra, retorna su posicíón. Si no lo encuentra, retorna -1.
+     */
+    private int search_for_index(K key) {
+        int ie = this.h(key.hashCode());
+        for (int i = 0; ; i++) {
+            int y = ie + i * i;
+            y = y % this.table.length;
+            EntryDA<K, V> entry = this.table[y];
+            if (entry.getState() != 0) {
+                if (entry.getState() == 1) {
+                    if (key.equals(entry.getKey())) {
+                        return y;
+                    }
+                }
+            } else {
+                return -1;
+            }
+        }
     }
 
     //************************ Clases Internas.
+
     /*
      * Clase interna que representa los pares de objetos que se almacenan en la
      * tabla hash: son instancias de esta clase las que realmente se guardan en
-     * en cada una de las listas del arreglo table que se usa como soporte de
+     * el arreglo table que se usa como soporte de
      * la tabla. Lanzará una IllegalArgumentException si alguno de los dos
      * parámetros es null.
      */
-    private static class Entry<K, V> implements Map.Entry<K, V> {
+    private class EntryDA<K, V> implements Map.Entry<K, V> {
         private K key;
         private V value;
+        private int state;
 
-        public Entry(K key, V value) {
-            if (key == null || value == null) throw new IllegalArgumentException("Entry(): parámetro null...");
-
+        public EntryDA(K key, V value) {
+            this.state = 1;
+            if (key == null || value == null) {
+                throw new IllegalArgumentException("Entry(): parámetro null...");
+            }
             this.key = key;
             this.value = value;
+        }
+
+        public EntryDA() {
+            this.state = 0;
         }
 
         @Override
@@ -600,6 +713,10 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
         @Override
         public V getValue() {
             return value;
+        }
+
+        public int getState() {
+            return state;
         }
 
         @Override
@@ -613,6 +730,10 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
             return old;
         }
 
+        public void setState(int state) {
+            this.state = state;
+        }
+
         @Override
         public int hashCode() {
             int hash = 7;
@@ -623,6 +744,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
 
         @Override
         public boolean equals(Object obj) {
+
             if (this == obj) {
                 return true;
             }
@@ -633,11 +755,14 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
                 return false;
             }
 
-            final Entry other = (Entry) obj;
+            final EntryDA other = (EntryDA) obj;
             if (!Objects.equals(this.key, other.key)) {
                 return false;
             }
-            return Objects.equals(this.value, other.value);
+            if (!Objects.equals(this.value, other.value)) {
+                return false;
+            }
+            return true;
         }
 
         @Override
@@ -656,12 +781,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      * eliminar un objeto (remove()), eliminar todo el contenido (clear) y la
      * creación de un Iterator (que incluye el método Iterator.remove()).
      */
-    private transient Set<K> keySet = null;
-    private transient Set<Map.Entry<K, V>> entrySet = null;
-    private transient Collection<V> values = null;
-
     private class KeySet extends AbstractSet<K> {
-
         @Override
         public Iterator<K> iterator() {
             return new KeySetIterator();
@@ -688,274 +808,84 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
         }
 
         private class KeySetIterator implements Iterator<K> {
-
-            private int currentEntry;
-            private int lastEntry;
-            private boolean isNextOK;
+            private int current; // índice del elemento que hay que procesar.
+            private boolean next_ok; // true: next fue invocado (para remove()...)
+            private int last;
             private int expectedModCount;
 
-            /*
-             * Crea un iterador comenzando en la primera lista. Activa el mecanismo
-             * fail-fast.
-             */
             public KeySetIterator() {
-                currentEntry = 0;
-                lastEntry = 0;
-                isNextOK = false;
+                last = -1;
+                current = -1;
+                next_ok = false;
                 expectedModCount = TSBHashTableDA.this.modCount;
             }
 
-            /*
-             * Determina si hay al menos un elemento en la tabla que no haya sido retornado
-             * por next().
+            /**
+             * Indica si queda algun objeto en el recorrido del iterador.
+             *
+             * @return true si queda algun objeto en el recorrido - false si no
+             * quedan objetos.
              */
             @Override
             public boolean hasNext() {
-                // variable auxiliar t y s para simplificar accesos...
-                Entry<K, V>[] t = TSBHashTableDA.this.table;
-                int[] s = TSBHashTableDA.this.fieldState;
-
-                if (currentEntry >= t.length) {
+                if (isEmpty()) {
+                    return false;
+                }
+                if (current >= TSBHashTableDA.this.table.length - 1) {
                     return false;
                 }
 
-                // busco el siguiente indice cerrado
-                int next_entry = currentEntry + 1;
-                for (int i = next_entry; i < t.length; i++) {
-                    if (s[i] == 1) return true;
-                }
-
-                // Si no encontro ninguno retorno false
-                return false;
-            }
-
-            @Override
-            public K next() {
-                // control: fail-fast iterator...
-                if (TSBHashTableDA.this.modCount != expectedModCount) {
-                    throw new ConcurrentModificationException("next(): modificación inesperada de tabla...");
-                }
-
-                if (!hasNext()) {
-                    throw new NoSuchElementException("next(): no existe el elemento pedido...");
-                }
-
-                // variable auxiliar t y s para simplificar accesos...
-                Entry<K, V>[] t = TSBHashTableDA.this.table;
-                int[] s = TSBHashTableDA.this.fieldState;
-
-                // busco el siguiente indice cerrado
-                int nextEntry = currentEntry;
-                for (nextEntry++; s[nextEntry] != 1; nextEntry++) ; // TODO: buscar implementación alternativa
-
-                // Actualizo los indices
-                lastEntry = currentEntry;
-                currentEntry = nextEntry;
-
-                // avisar que next() fue invocado con éxito...
-                isNextOK = true;
-
-                // y retornar la clave del elemento alcanzado...
-
-                return t[currentEntry].getKey();
-            }
-
-            /*
-             * Remueve el elemento actual de la tabla, dejando el iterador en la
-             * posición anterior al que fue removido. El elemento removido es el
-             * que fue retornado la última vez que se invocó a next(). El método
-             * sólo puede ser invocado una vez por cada invocación a next().
-             */
-            @Override
-            public void remove() {
-                // Control: fail-fast iterator
-                if (TSBHashTableDA.this.modCount != expectedModCount)
-                    throw new ConcurrentModificationException("remove(): modificación concurrente no permitida");
-
-                if (!isNextOK)
-                    throw new IllegalArgumentException("remove(): debe invocar a next() antes de remove()...");
-
-                // eliminar el objeto que retornó next() la última vez...
-                TSBHashTableDA.this.table[currentEntry] = null;
-                TSBHashTableDA.this.fieldState[currentEntry] = 2;
-
-                // quedar apuntando al anterior al que se retornará...
-                currentEntry = lastEntry;
-
-                // avisar que el remove() válido para next() ya se activó...
-                isNextOK = false;
-
-                // la tabla tiene un elemento menos
-                TSBHashTableDA.this.count--;
-
-                // fail-fast iterator: todo en orden...
-                TSBHashTableDA.this.modCount++;
-                expectedModCount++;
-            }
-        }
-    }
-
-    private class EntrySet extends AbstractSet<Map.Entry<K, V>> {
-
-        @Override
-        public Iterator<Map.Entry<K, V>> iterator() {
-            return new EntrySetIterator();
-        }
-
-        @Override
-        public int size() {
-            return TSBHashTableDA.this.count;
-        }
-
-        @Override
-        public boolean contains(Object o) {
-            if (o == null) return false;
-            if (!(o instanceof Entry)) return false;
-
-            Entry<K, V>[] t = TSBHashTableDA.this.table;
-            int[] s = TSBHashTableDA.this.fieldState;
-
-            Entry<K, V> entry = (Entry<K, V>) o;
-
-            int qi = TSBHashTableDA.this.h(entry.getKey());
-            int j = 1;
-
-            // Búsqueda del entry
-            while (s[qi] != 0) {
-                // Si la casilla qi está cerrada checkeo si es el mismo
-                if (s[qi] == 1) {
-                    Entry<K, V> tableEntry = t[qi];
-                    if (tableEntry.equals(entry)) return true;
-                }
-
-                // nuevo index
-                qi += j * j;
-                j++;
-                if (qi >= t.length) qi %= t.length;
-            }
-            return false;
-        }
-
-        @Override
-        public void clear() {
-            TSBHashTableDA.this.clear();
-        }
-
-        @Override
-        public boolean remove(Object o) {
-            if (o == null) throw new NullPointerException("remove(): parámetro null");
-            if (!(o instanceof Entry)) {
-                return false;
-            }
-
-            Entry<K, V>[] t = TSBHashTableDA.this.table;
-            int[] s = TSBHashTableDA.this.fieldState;
-
-            Entry<K, V> entry = (Entry<K, V>) o;
-
-            int qi = TSBHashTableDA.this.h(entry.getKey());
-            int j = 1;
-
-            // Búsqueda del objeto
-            while (s[qi] != 0) {
-                if (s[qi] == 1) {
-                    Entry<K, V> tableEntry = t[qi];
-
-                    // Eliminación si se encuentra
-                    if (tableEntry.equals(entry)) {
-                        t[qi] = null;
-                        s[qi] = 2;
-
-                        TSBHashTableDA.this.count--;
-                        TSBHashTableDA.this.modCount++;
-
+                for (int i = current + 1; i < TSBHashTableDA.this.table.length; i++) {
+                    if (TSBHashTableDA.this.table[i].getState() == 1) {
                         return true;
                     }
                 }
-                // nuevo index
-                qi += j * j;
-                j++;
-                if (qi >= t.length) qi %= t.length;
-            }
 
-            return false;
-        }
-
-        private class EntrySetIterator implements Iterator<Map.Entry<K, V>> {
-
-            private int currentEntry;
-            private int lastEntry;
-            private boolean isNextOK;
-            private int expectedModCount;
-
-            public EntrySetIterator() {
-                currentEntry = -1;
-                lastEntry = 0;
-                isNextOK = false;
-                expectedModCount = TSBHashTableDA.this.modCount;
-            }
-
-            /*
-             * Determina si hay al menos un elemento en la tabla que no haya
-             * sido retornado por next().
-             */
-            @Override
-            public boolean hasNext() {
-                Entry<K, V>[] t = TSBHashTableDA.this.table;
-                int[] s = TSBHashTableDA.this.fieldState;
-                //Si el index currenEntry es mayor al tamaño de la tabla retornamos false
-                if (currentEntry >= t.length) return false;
-
-                // Buscamos el siguiente index cerrado
-                int nextEntry = currentEntry + 1;
-                for (int i = nextEntry; i < t.length; i++) {
-                    if (s[i] == 1) return true;
-                }
-                // Retornamos false si no se encontró
                 return false;
             }
 
-            /*
-             * Retorna el siguiente elemento disponible en la tabla.
+            /**
+             * Retorna el siguiente objeto en el recorrido del iterador. *
+             *
+             * @return el siguiente objeto en el recorrido.
+             * @throws NoSuchElementException si la lista está vacia o en la lista
+             *                                no quedan elementos por recorrer.
              */
             @Override
-            public Entry<K, V> next() {
-                // Control: fail-fast iterator...
-                if (TSBHashTableDA.this.modCount != expectedModCount)
-                    throw new ConcurrentModificationException("next(): modificación concurrente no permitida");
+            public K next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException("no quedan...");
+                }
 
-                if (!hasNext()) throw new NoSuchElementException("next(): no existe el elemento pedido");
+                int i;
+                for (i = current + 1; TSBHashTableDA.this.table[i].getState() != 1; i++) ;
 
-                Entry<K, V>[] t = TSBHashTableDA.this.table;
-                int[] s = TSBHashTableDA.this.fieldState;
 
-                // Búsqueda del siguiente index cerrado
-                int nextEntry = currentEntry;
-                for (nextEntry++; s[nextEntry] != 1; nextEntry++) ; // TODO: buscar implementación alternativa
-
-                lastEntry = currentEntry;
-                currentEntry = nextEntry;
-
-                isNextOK = true;
-
-                return t[currentEntry];
+                last = current;
+                current = i;
+                next_ok = true;
+                K key = TSBHashTableDA.this.table[current].getKey();
+                return key;
             }
 
+            /**
+             * Elimina el ultimo elemento que retornó el iterador. Debe invocarse
+             * una sola vez antes de volver invocar a next(). El iterador queda
+             * posicionado en el elemento anterior al eliminado.
+             *
+             * @throws IllegalStateException si se invoca a remove() sin haber
+             *                               invocado a next(), o si remove() fue invocado mas de una vez
+             *                               luego de una sola invocacion a next().
+             */
             @Override
             public void remove() {
-                if (!isNextOK) throw new IllegalStateException("remove(): debe invocar a next() antes de remove()...");
+                if (!next_ok) {
+                    throw new IllegalStateException("invocar a next()");
+                }
 
-                // Eliminamos el objeto de la tabla que retornó next() la última vez...
-                TSBHashTableDA.this.table[currentEntry] = null;
-                TSBHashTableDA.this.fieldState[currentEntry] = 2;
-
-                // queda apuntando al anterior al que se retornó...
-                currentEntry = lastEntry;
-
-                // avisar que el remove() válido para next() ya se activó...
-                isNextOK = false;
-
-                // la tabla tiene un elementon menos...
+                TSBHashTableDA.this.table[current] = new EntryDA();
+                current = last;
+                next_ok = false;
                 TSBHashTableDA.this.count--;
 
                 // fail_fast iterator: todo en orden...
@@ -965,7 +895,169 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
         }
     }
 
-    // TODO: ValueCollection
+    /*
+     * Clase interna que representa una vista de todos los PARES mapeados en la
+     * tabla: si la vista cambia, cambia también la tabla que le da respaldo, y
+     * viceversa. La vista es stateless: no mantiene estado alguno (es decir, no
+     * contiene datos ella misma, sino que accede y gestiona directamente datos
+     * de otra fuente), por lo que no tiene atributos y sus métodos gestionan en
+     * forma directa el contenido de la tabla. Están soportados los metodos para
+     * eliminar un objeto (remove()), eliminar todo el contenido (clear) y la
+     * creación de un Iterator (que incluye el método Iterator.remove()).
+     */
+    private class EntrySet extends AbstractSet<Map.Entry<K, V>> {
+
+        @Override
+        public Iterator<Map.Entry<K, V>> iterator() {
+            return new EntrySetIterator();
+        }
+
+        /*
+         * Verifica si esta vista (y por lo tanto la tabla) contiene al par
+         * que entra como parámetro (que debe ser de la clase Entry).
+         */
+        @Override
+        public boolean contains(Object o) {
+
+            if (o == null) {
+                return false;
+            }
+            if (!(o instanceof Entry)) {
+                return false;
+            }
+
+            Map.Entry<K, V> entry = (Map.Entry<K, V>) o;
+            K key = entry.getKey();
+            if (TSBHashTableDA.this.containsKey(key)) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        /*
+         * Elimina de esta vista (y por lo tanto de la tabla) al par que entra
+         * como parámetro (y que debe ser de tipo Entry).
+         */
+        @Override
+        public boolean remove(Object o) {
+            if (o == null) {
+                throw new NullPointerException("remove(): parámetro null");
+            }
+            if (!(o instanceof Entry)) {
+                return false;
+            }
+
+            Map.Entry<K, V> entry = (Map.Entry<K, V>) o;
+            K key = entry.getKey();
+            V old = TSBHashTableDA.this.remove(key);
+
+            if (old != null) {
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public int size() {
+            return TSBHashTableDA.this.count;
+        }
+
+        @Override
+        public void clear() {
+            TSBHashTableDA.this.clear();
+        }
+
+        private class EntrySetIterator implements Iterator<Map.Entry<K, V>> {
+
+            private int current; // índice del elemento que hay que procesar.
+            private boolean next_ok; // true: next fue invocado (para remove()...)
+            private int last;
+            private int expectedModCount;
+
+
+            public EntrySetIterator() {
+                last = -1;
+                current = -1;
+                next_ok = false;
+                expectedModCount = TSBHashTableDA.this.modCount;
+            }
+
+            /**
+             * Indica si queda algun objeto en el recorrido del iterador.
+             *
+             * @return true si queda algun objeto en el recorrido - false si no
+             * quedan objetos.
+             */
+            @Override
+            public boolean hasNext() {
+                if (isEmpty()) {
+                    return false;
+                }
+                if (current >= TSBHashTableDA.this.table.length - 1) {
+                    return false;
+                }
+
+                for (int i = current + 1; i < TSBHashTableDA.this.table.length; i++) {
+                    if (TSBHashTableDA.this.table[i].getState() == 1) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            /**
+             * Retorna el siguiente objeto en el recorrido del iterador. *
+             *
+             * @return el siguiente objeto en el recorrido.
+             * @throws NoSuchElementException si la lista está vacia o en la lista
+             *                                no quedan elementos por recorrer.
+             */
+            @Override
+            public Map.Entry<K, V> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException("no quedan...");
+                }
+
+                int i;
+                for (i = current + 1; TSBHashTableDA.this.table[i].getState() != 1; i++) ;
+
+
+                last = current;
+                current = i;
+                next_ok = true;
+                Map.Entry<K, V> entry = TSBHashTableDA.this.table[current];
+                return entry;
+            }
+
+            /**
+             * Elimina el ultimo elemento que retornó el iterador. Debe invocarse
+             * una sola vez antes de volver invocar a next(). El iterador queda
+             * posicionado en el elemento anterior al eliminado.
+             *
+             * @throws IllegalStateException si se invoca a remove() sin haber
+             *                               invocado a next(), o si remove() fue invocado mas de una vez
+             *                               luego de una sola invocacion a next().
+             */
+            @Override
+            public void remove() {
+                if (!next_ok) {
+                    throw new IllegalStateException("invocar a next()");
+                }
+
+                TSBHashTableDA.this.table[current] = new EntryDA<>();
+                current = last;
+                next_ok = false;
+                TSBHashTableDA.this.count--;
+
+                // fail_fast iterator: todo en orden...
+                TSBHashTableDA.this.modCount++;
+                expectedModCount++;
+            }
+        }
+    }
+
     /*
      * Clase interna que representa una vista de todos los VALORES mapeados en
      * la tabla: si la vista cambia, cambia también la tabla que le da respaldo,
@@ -973,7 +1065,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      * no contiene datos ella misma, sino que accede y gestiona directamente los
      * de otra fuente), por lo que no tiene atributos y sus métodos gestionan en
      * forma directa el contenido de la tabla. Están soportados los metodos para
-     * eliminar un objeto (remove()), eliminar el contenido (clear) y la
+     * eliminar un objeto (remove()), eliminar todo el contenido (clear) y la
      * creación de un Iterator (que incluye el método Iterator.remove()).
      */
     private class ValueCollection extends AbstractCollection<V> {
@@ -998,20 +1090,19 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
         }
 
         private class ValueCollectionIterator implements Iterator<V> {
-
-            private int currentEntry;
-            private int lastEntry;
-            private boolean isNextOK;
+            private int current; // índice del elemento que hay que procesar.
+            private boolean next_ok; // true: next fue invocado (para remove()...)
+            private int last;
             private int expectedModCount;
 
             /*
-             * Crea un iterador comenzando en la primera lista. Activa el mecanismo
-             * fail-fast.
+             * Crea un iterador comenzando en la primera lista. Activa el
+             * mecanismo fail-fast.
              */
             public ValueCollectionIterator() {
-                currentEntry = -1;
-                lastEntry = 0;
-                isNextOK = false;
+                last = -1;
+                current = -1;
+                next_ok = false;
                 expectedModCount = TSBHashTableDA.this.modCount;
             }
 
@@ -1021,17 +1112,17 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
              */
             @Override
             public boolean hasNext() {
-                // variable auxiliar t y s para simplificar accesos...
-                Entry<K, V> t[] = TSBHashTableDA.this.table;
-                int[] s = TSBHashTableDA.this.fieldState;
-
-                if (currentEntry >= t.length) {
+                if (isEmpty()) {
+                    return false;
+                }
+                if (current >= TSBHashTableDA.this.table.length - 1) {
                     return false;
                 }
 
-                int next_entry = currentEntry + 1;
-                for (int i = next_entry; i < t.length; i++) {
-                    if (s[i] == 1) return true;
+                for (int i = current + 1; i < TSBHashTableDA.this.table.length; i++) {
+                    if (TSBHashTableDA.this.table[i].getState() == 1) {
+                        return true;
+                    }
                 }
 
                 return false;
@@ -1042,153 +1133,43 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
              */
             @Override
             public V next() {
-                // control: fail-fast iterator...
-                if (TSBHashTableDA.this.modCount != expectedModCount) {
-                    throw new ConcurrentModificationException("next(): modificación inesperada de tabla...");
-                }
-
                 if (!hasNext()) {
-                    throw new NoSuchElementException("next(): no existe el elemento pedido...");
+                    throw new NoSuchElementException("no quedan...");
                 }
 
-                // variable auxiliar t y s para simplificar accesos...
-                Entry<K, V> t[] = TSBHashTableDA.this.table;
-                int s[] = TSBHashTableDA.this.fieldState;
+                int i;
+                for (i = current + 1; TSBHashTableDA.this.table[i].getState() != 1; i++) ;
 
-                // busco el siguiente indice cerrado
-                int next_entry = currentEntry;
-                for (next_entry++; s[next_entry] != 1; next_entry++) ;
 
-                // Actualizo los indices
-                lastEntry = currentEntry;
-                currentEntry = next_entry;
-
-                // avisar que next() fue invocado con éxito...
-                isNextOK = true;
-
-                // y retornar la clave del elemento alcanzado...
-
-                return t[currentEntry].getValue();
+                last = current;
+                current = i;
+                next_ok = true;
+                V value = TSBHashTableDA.this.table[current].getValue();
+                return value;
             }
 
+            /*
+             * Remueve el elemento actual de la tabla, dejando el iterador en la
+             * posición anterior al que fue removido. El elemento removido es el
+             * que fue retornado la última vez que se invocó a next(). El método
+             * sólo puede ser invocado una vez por cada invocación a next().
+             */
             @Override
             public void remove() {
-                // control: fail-fast iterator...
-                if (TSBHashTableDA.this.modCount != expectedModCount)
-                    throw new ConcurrentModificationException("remove(): modificación inesperada de tabla...");
+                if (!next_ok) {
+                    throw new IllegalStateException("invocar a next()");
+                }
 
-
-                if (!isNextOK)
-                    throw new IllegalStateException("remove(): debe invocar a next() antes de remove()...");
-
-
-                // eliminar el objeto que retornó next() la última vez...
-                TSBHashTableDA.this.table[currentEntry] = null;
-                TSBHashTableDA.this.fieldState[currentEntry] = 2;
-
-                // queda apuntando al anterior al que se retornó...
-                currentEntry = lastEntry;
-
-                // avisar que el remove() válido para next() ya se activó...
-                isNextOK = false;
-
-                // la tabla tiene un elementon menos...
+                TSBHashTableDA.this.table[current] = new EntryDA();
+                current = last;
+                next_ok = false;
                 TSBHashTableDA.this.count--;
 
-                // fail_fast iterator: to do en orden...
+                // fail_fast iterator: todo en orden...
                 TSBHashTableDA.this.modCount++;
                 expectedModCount++;
             }
         }
     }
-
-
-    /**
-     * Retorna un hash code para la tabla completa.
-     *
-     * @return un hash code para la tabla.
-     */
-    @Override
-    public int hashCode() {
-        if (this.isEmpty()) return 0;
-
-        return Arrays.hashCode(table);
-    }
-
-    /**
-     * Determina si esta tabla es igual al objeto espeficicado.
-     *
-     * @param obj el objeto a comparar con esta tabla.
-     * @return true si los objetos son iguales.
-     */
-    @Override
-    public boolean equals(Object obj) {
-        if (!(obj instanceof Map)) {
-            return false;
-        }
-
-        Map<K, V> t = (Map<K, V>) obj;
-        if (t.size() != this.size()) {
-            return false;
-        }
-
-        try {
-            Iterator<Map.Entry<K, V>> i = this.entrySet.iterator();
-            while (i.hasNext()) {
-                Map.Entry<K, V> e = i.next();
-                K key = e.getKey();
-                V value = e.getValue();
-                if (t.get(key) == null) {
-                    return false;
-                } else {
-                    if (!value.equals(t.get(key))) {
-                        return false;
-                    }
-                }
-            }
-        } catch (ClassCastException e) {
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Retorna una copia superficial de la tabla.
-     *
-     * @return una copia superficial de la tabla.
-     */
-    @Override
-    protected Object clone() throws CloneNotSupportedException {
-
-        TSBHashTableDA<K, V> t = new TSBHashTableDA<>(this.table.length, this.load_factor);
-
-        for (Map.Entry<K, V> entry : this.entrySet()) {
-            t.put(entry.getKey(), entry.getValue());
-        }
-
-        return t;
-    }
-
-    /**
-     * Devuelve el contenido de la tabla en forma de String.
-     *
-     * @return una cadena con el contenido completo de la tabla.
-     */
-    @Override
-    public String toString() {
-
-        StringBuilder str = new StringBuilder();
-        str.append("\nTabla: [\n");
-        for (int i = 0; i < this.table.length; i++) {
-            if (this.table[i] == null) {
-                str.append("\t\n");
-            } else {
-                str.append("\t").append(this.table[i].toString()).append("\n");
-            }
-        }
-        str.append("}");
-
-        return str.toString();
-    }
 }
+
