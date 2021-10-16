@@ -14,9 +14,8 @@ import java.util.Set;
 
 /**
  * Clase para emular la funcionalidad de la clase java.util.Hashtable provista
- * en forma nativa por Java. Una TSBHashtable usa un arreglo de listas de la
- * clase TSBArrayList a modo de buckets (o listas de desborde) para resolver las
- * colisiones que pudieran presentarse.
+ * en forma nativa por Java. Una TSBHashtable usa direccionamiento abierto
+ * para resolver las colisiones que pudieran presentarse.
  * <p>
  * Se almacenan en la tabla pares de objetos (key, value), en donde el objeto
  * key actúa como clave para identificar al objeto value. La tabla no admite
@@ -30,18 +29,10 @@ import java.util.Set;
  * para determinar qué tan llena está la tabla antes de lanzar un proceso de
  * rehash: si loadFactor es 0.75, entonces se hará un rehash cuando la cantidad
  * de casillas ocupadas en el arreglo de soporte sea un 75% del tamaño de ese
- * arreglo. En nuestra clase TSBHashtable, mantuvimos el concepto de loadFactor
- * (ahora llamado load_factor) pero con una interpretación distinta: en nuestro
- * modelo, se lanza un rehash si la cantidad promedio de valores por lista es
- * mayor a cierto número constante y pequeño, que asociamos al load_factor para
- * mantener el espíritu de la implementación nativa. En nuestro caso, si el
- * valor load_factor es 0.8 entonces se lanzará un rehash si la cantidad
- * promedio de valores por lista es mayor a 0.8 * 10 = 8 elementos por lista.
+ * arreglo.
  *
  * @param <K> el tipo de los objetos que serán usados como clave en la tabla.
  * @param <V> el tipo de los objetos que serán los valores de la tabla.
- * @author Ing. Valerio Frittelli.
- * @version Septiembre de 2017.
  */
 public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable {
     //************************ Constantes (privadas o públicas).
@@ -51,13 +42,13 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
 
     //************************ Atributos privados (estructurales).
 
-    // la tabla hash: el arreglo que contiene las listas de desborde...
+    // la tabla hash: el arreglo que da soporte a la tabla...
     private EntryDA<K, V>[] table;
 
     // el tamaño inicial de la tabla (tamaño con el que fue creada)...
     private int initial_capacity;
 
-    // la cantidad de objetos que contiene la tabla en TODAS sus listas...
+    // la cantidad de objetos que contiene la tabla...
     private int count;
 
     // el factor de carga para calcular si hace falta un rehashing...
@@ -85,7 +76,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     //************************ Constructores.
 
     /**
-     * Crea una tabla vacía, con la capacidad inicial igual a 11 y con factor
+     * Crea una tabla vacía, con la capacidad inicial igual a 5 y con factor
      * de carga igual a 0.8f.
      */
     public TSBHashTableDA() {
@@ -408,10 +399,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     //************************ Redefinición de métodos heredados desde Object.
 
     /**
-     * Retorna una copia superficial de la tabla. Las listas de desborde o
-     * buckets que conforman la tabla se clonan ellas mismas, pero no se clonan
-     * los objetos que esas listas contienen: en cada bucket de la tabla se
-     * almacenan las direcciones de los mismos objetos que contiene la original.
+     * Retorna una copia superficial de la tabla.
      *
      * @return una copia superficial de la tabla.
      * @throws java.lang.CloneNotSupportedException si la clase no implementa la
@@ -476,7 +464,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
      */
     @Override
     public int hashCode() {
-        // HACER...
+
         if (this.isEmpty()) return 0;
 
         return Arrays.hashCode(table);
@@ -528,11 +516,8 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
 
     /**
      * Incrementa el tamaño de la tabla y reorganiza su contenido. Se invoca
-     * automaticamente cuando se detecta que la cantidad promedio de nodos por
-     * lista supera a cierto el valor critico dado por (10 * load_factor). Si el
-     * valor de load_factor es 0.8, esto implica que el límite antes de invocar
-     * rehash es de 8 nodos por lista en promedio, aunque seria aceptable hasta
-     * unos 10 nodos por lista.
+     * automaticamente cuando se detecta que la ocupacion promedio de la tabla
+     * supera a cierto porcentaje critico dado por load_factor.
      */
     protected void rehash() {
         int old_length = this.table.length;
@@ -608,14 +593,6 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     }
 
     /*
-     * Función hash. Toma un objeto key que representa una clave y calcula y
-     * retorna un índice válido para esa clave para entrar en la tabla.
-     */
-    private int h(K key) {
-        return h(key.hashCode(), this.table.length);
-    }
-
-    /*
      * Función hash. Toma un objeto key que representa una clave y un tamaño de
      * tabla t, y calcula y retorna un índice válido para esa clave dedo ese
      * tamaño.
@@ -643,15 +620,14 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
     }
 
     /*
-     * Busca en la lista bucket un objeto Entry cuya clave coincida con key.
+     * Busca en la tabla un objeto Entry cuya clave coincida con key.
      * Si lo encuentra, retorna ese objeto Entry. Si no lo encuentra, retorna
      * null.
      */
     private Map.Entry<K, V> search_for_entry(K key) {
         int index = search_for_index(key);
         if (index != -1) {
-            EntryDA<K, V> entry = this.table[index];
-            return entry;
+            return this.table[index];
         }
         return null;
     }
