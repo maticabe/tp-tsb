@@ -5,7 +5,6 @@ import java.util.AbstractCollection;
 import java.util.AbstractSet;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.ConcurrentModificationException;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -229,20 +228,16 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
         for (int i = 0; ; i++) {
             int y = ie + i * i;
             y = y % this.table.length;
-            EntryDA<K, V> entry = (EntryDA<K, V>) this.table[y];
+            EntryDA<K, V> entry = this.table[y];
             if (entry.getState() != 0) {
-                if (entry.getState() == 1) {
-                    if (key.equals(entry.getKey())) {
+                if (entry.getState() == 1 && key.equals(entry.getKey())) {
                         old = entry.getValue();
                         entry.setValue(value);
                         return old;
-                    }
-                } else {
-                    if (entry.getState() == 2) {
-                        firstTombstone = y;
-                    }
+                } else if (entry.getState() == 2) {
+                    firstTombstone = y;
                 }
-            } else if (entry.getState() == 0) {
+            } else {
                 if (firstTombstone != -1) {
                     this.table[firstTombstone] = new EntryDA(key, value);
 
@@ -541,10 +536,9 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
         this.modCount++;
 
         // recorrer el viejo arreglo y redistribuir los objetos que tenia...
-        for (int i = 0; i < this.table.length; i++) {
-            if (table[i].getState() == 1) {
-                EntryDA<K, V> entry = table[i];
-                K key = entry.getKey();
+        for (EntryDA<K, V> kvEntryDA : this.table) {
+            if (kvEntryDA.getState() == 1) {
+                K key = kvEntryDA.getKey();
                 int index = h(key, temp.length);
                 int j = 1;
 
@@ -553,7 +547,7 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
                     index = y % temp.length;
                     j++;
                 }
-                temp[index] = entry;
+                temp[index] = kvEntryDA;
             }
 
         }
@@ -643,10 +637,8 @@ public class TSBHashTableDA<K, V> implements Map<K, V>, Cloneable, Serializable 
             y = y % this.table.length;
             EntryDA<K, V> entry = this.table[y];
             if (entry.getState() != 0) {
-                if (entry.getState() == 1) {
-                    if (key.equals(entry.getKey())) {
-                        return y;
-                    }
+                if (entry.getState() == 1 && key.equals(entry.getKey())) {
+                    return y;
                 }
             } else {
                 return -1;
